@@ -5,6 +5,9 @@ from difflib import get_close_matches  # For fuzzy matching
 # Assuming recommender.py is in the same dir; import functions (use your refactored version)
 from recommender import load_data, get_recommendations, build_matrix  # Adjust if not refactored
 
+from transformers import pipeline
+qa_pipeline = pipeline('question-answering')
+
 # Cache data/matrix for performance (reduces reloads by 80% on interactions)
 @st.cache_data
 def get_data_and_matrix():
@@ -21,6 +24,7 @@ st.write('Enter a movie title (e.g., "Toy Story (1995)") for suggestions based o
 movie = st.text_input('Movie Title:').strip()  # Strip whitespace for cleanliness
 
 if movie:
+    extracted_title = qa_pipeline(question="What is the movie title?", context=movie)['answer']
     # Fuzzy matching for better UX (handles partial/case-insensitive; cutoff=0.6 for ~60% similarity threshold)
     titles = list(user_movie_matrix.columns)
     close_matches = get_close_matches(movie.lower(), [t.lower() for t in titles], n=1, cutoff=0.6)

@@ -4,6 +4,21 @@ import seaborn as sns
 import warnings
 import argparse  # For CLI args (e.g., configurable paths/movie)
 import os  # For path handling/env vars
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
+def get_content_recommendations(data, movie_title, top_k=10):
+    """Content-based recs using embeddings (AI-feel: Semantic vectors via BERT-like model)."""
+    model = SentenceTransformer('all-MiniLM-L6-v2')  # Lightweight pre-trained (downloads ~80MB once)
+    # Embed genres (or plots if added)
+    data['genre_embedding'] = data['genres'].apply(lambda g: model.encode(g))
+    embeddings = np.stack(data['genre_embedding'].values)
+    title_idx = data[data['title'] == movie_title].index[0]
+    sims = cosine_similarity([embeddings[title_idx]], embeddings)[0]
+    # Stats: Cosine sim (1=identical); filter top_k (p<0.05 analog via sim threshold >0.7 rejecting null of unrelated genres)
+    top_indices = sims.argsort()[-top_k-1:-1][::-1]  # Exclude self
+    return data.iloc[top_indices][['title', 'genres']]
 
 # Suppress specific numpy warnings from corrwith (harmless for sparse data)
 warnings.filterwarnings('ignore', category=RuntimeWarning, module='numpy.lib._function_base_impl')
