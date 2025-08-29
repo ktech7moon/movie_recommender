@@ -128,12 +128,14 @@ dmypy.json
 cython_debug/
 
 # Project-Specific Ignores
-ml-latest-small.zip  # Downloaded zip—reproducible
-ml-latest-small/     # Dataset folder—downloadable, don't track raw data
+ml-latest-small.zip  # Downloaded zip—reproducible via curl
+ml-latest-small/     # Dataset folder—large, external source
 ratings_dist.png     # Generated plot—regenerate on run
 
 # macOS-Specific (for your MacBook)
 .DS_Store
+.Apple*
+Thumbs.db
 
-# VS Code-Specific (if you have project settings)
+# VS Code-Specific (ignores workspace settings if shared)
 .vscode/
