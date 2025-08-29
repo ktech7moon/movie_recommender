@@ -22,3 +22,9 @@ ratings_dist.png
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+
+# Project-Specific
+ml-latest-small.zip
+ml-latest-small/
+ratings_dist.png
+recommender_env/
