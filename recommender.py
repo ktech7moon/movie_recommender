@@ -1,54 +1,119 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import warnings  # Added to suppress warnings
-from sklearn.metrics.pairwise import cosine_similarity  # Optional for advanced similarity; not used here but imported for future
+import warnings
+import argparse  # For CLI args (e.g., configurable paths/movie)
+import os  # For path handling/env vars
 
 # Suppress specific numpy warnings from corrwith (harmless for sparse data)
 warnings.filterwarnings('ignore', category=RuntimeWarning, module='numpy.lib._function_base_impl')
 
-# Step: Load the data from your unzipped folder
-ratings = pd.read_csv('ml-latest-small/ratings.csv')  # Path matches your download
-movies = pd.read_csv('ml-latest-small/movies.csv')
+def load_data(ratings_path, movies_path):
+    """
+    Load and merge MovieLens datasets.
+    
+    Args:
+        ratings_path (str): Path to ratings.csv
+        movies_path (str): Path to movies.csv
+    
+    Returns:
+        pd.DataFrame: Merged data
+    """
+    if not os.path.exists(ratings_path) or not os.path.exists(movies_path):
+        raise FileNotFoundError("Dataset files not found. Check paths or download from https://grouplens.org/datasets/movielens/latest/")
+    ratings = pd.read_csv(ratings_path)
+    movies = pd.read_csv(movies_path)
+    return pd.merge(ratings, movies, on='movieId')
 
-# Merge datasets on movieId for a combined view
-data = pd.merge(ratings, movies, on='movieId')
-print("First 5 rows of merged data:")
-print(data.head())  # Outputs sample: userId, movieId, rating, timestamp, title, genres
+def explore_data(data, plot_path='ratings_dist.png'):
+    """
+    Perform basic exploration and save visualization.
+    
+    Args:
+        data (pd.DataFrame): Merged dataset
+        plot_path (str): Path to save histogram (optional)
+    
+    Returns:
+        dict: Exploration results (top averages, counts)
+    """
+    avg_ratings = data.groupby('title')['rating'].mean().sort_values(ascending=False).head(10)
+    rating_counts = data.groupby('title')['rating'].count().sort_values(ascending=False).head(10)
+    
+    # Stats insight: Mean ~3.5, std dev ~1; histogram for distribution (skew toward 3-5)
+    sns.set_style('whitegrid')
+    plt.figure(figsize=(10, 6))
+    data['rating'].hist(bins=50)
+    plt.title('Distribution of Ratings')
+    plt.xlabel('Rating')
+    plt.ylabel('Count')
+    plt.savefig(plot_path)
+    
+    return {
+        'top_avg_ratings': avg_ratings,
+        'top_rating_counts': rating_counts,
+        'plot_saved': plot_path
+    }
 
-# Step: Basic exploration - average ratings and counts (stats insight: mean rating ~3.5, std dev ~1)
-print("\nTop 10 movies by average rating:")
-print(data.groupby('title')['rating'].mean().sort_values(ascending=False).head(10))
-print("\nTop 10 movies by number of ratings:")
-print(data.groupby('title')['rating'].count().sort_values(ascending=False).head(10))
+def build_matrix(data):
+    """
+    Build user-movie rating matrix.
+    
+    Args:
+        data (pd.DataFrame): Merged dataset
+    
+    Returns:
+        pd.DataFrame: Pivot table matrix
+    """
+    return data.pivot_table(index='userId', columns='title', values='rating')
 
-# Visualize rating distribution (saves a plot; view with open ratings_dist.png)
-sns.set_style('whitegrid')
-plt.figure(figsize=(10, 6))
-data['rating'].hist(bins=50)
-plt.title('Distribution of Ratings')
-plt.xlabel('Rating')
-plt.ylabel('Count')
-plt.savefig('ratings_dist.png')  # Saves to your folder; open in Finder to view
-print("\nRating distribution plot saved as ratings_dist.png")
+def get_recommendations(matrix, data, movie_title, min_ratings=50):
+    """
+    Get top recommendations using collaborative filtering (Pearson correlation).
+    
+    Args:
+        matrix (pd.DataFrame): User-movie matrix
+        data (pd.DataFrame): Merged dataset
+        movie_title (str): Movie to recommend similar to
+        min_ratings (int): Min rating count for statistical reliability (reduces variance)
+    
+    Returns:
+        pd.DataFrame: Top 10 similar movies (sorted by correlation)
+    """
+    if movie_title not in matrix.columns:
+        raise ValueError(f"Movie '{movie_title}' not found in dataset.")
+    movie_ratings = matrix[movie_title]
+    similar = matrix.corrwith(movie_ratings)
+    corr_df = pd.DataFrame(similar, columns=['Correlation'])
+    corr_df.dropna(inplace=True)
+    
+    # Join counts; filter for reliability (p<0.05 implied for strong r with n>min_ratings)
+    count_series = data.groupby('title')['rating'].count().rename('rating_count')
+    corr_df = corr_df.join(count_series)
+    corr_df = corr_df[corr_df['rating_count'] > min_ratings]
+    
+    return corr_df.sort_values('Correlation', ascending=False).head(10)
 
-# Step: Build user-movie matrix for collaborative filtering
-user_movie_matrix = data.pivot_table(index='userId', columns='title', values='rating')
-print("\nUser-movie matrix shape:", user_movie_matrix.shape)  # ~ (600 users, 9700 movies) - sparse
-
-# Step: Example recommendations - correlations for 'Toy Story (1995)'
-toy_story_ratings = user_movie_matrix['Toy Story (1995)']
-similar_to_toy_story = user_movie_matrix.corrwith(toy_story_ratings)  # Pearson correlation: -1 to 1
-corr_df = pd.DataFrame(similar_to_toy_story, columns=['Correlation'])
-corr_df.dropna(inplace=True)
-
-# Join with rating counts (filter >50 for statistical reliability; reduces variance in correlations)
-# Fixed: Rename the count Series to 'rating_count' explicitly
-count_series = data.groupby('title')['rating'].count().rename('rating_count')
-corr_df = corr_df.join(count_series)
-corr_df = corr_df[corr_df['rating_count'] > 50]
-
-# Top 10 similar movies (high correlation = similar user appeal; p<0.05 implied for strong r with n>50)
-recommendations = corr_df.sort_values('Correlation', ascending=False).head(10)
-print("\nTop 10 recommendations similar to 'Toy Story (1995)':")
-print(recommendations)
+if __name__ == '__main__':
+    # CLI for running as script (configurable; e.g., python recommender.py --movie "Toy Story (1995)")
+    parser = argparse.ArgumentParser(description="Movie Recommender CLI")
+    parser.add_argument('--ratings_path', default='ml-latest-small/ratings.csv', help='Path to ratings.csv')
+    parser.add_argument('--movies_path', default='ml-latest-small/movies.csv', help='Path to movies.csv')
+    parser.add_argument('--movie', default='Toy Story (1995)', help='Movie title for recommendations')
+    parser.add_argument('--plot_path', default='ratings_dist.png', help='Path to save distribution plot')
+    args = parser.parse_args()
+    
+    try:
+        data = load_data(args.ratings_path, args.movies_path)
+        exploration = explore_data(data, args.plot_path)
+        print("First 5 rows of merged data:\n", data.head())
+        print("\nTop 10 movies by average rating:\n", exploration['top_avg_ratings'])
+        print("\nTop 10 movies by number of ratings:\n", exploration['top_rating_counts'])
+        print(f"\nRating distribution plot saved as {exploration['plot_saved']}")
+        
+        matrix = build_matrix(data)
+        print("\nUser-movie matrix shape:", matrix.shape)
+        
+        recommendations = get_recommendations(matrix, data, args.movie)
+        print(f"\nTop 10 recommendations similar to '{args.movie}':\n", recommendations)
+    except Exception as e:
+        print(f"Error: {e}")

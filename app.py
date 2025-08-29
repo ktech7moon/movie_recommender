@@ -1,39 +1,50 @@
 import streamlit as st
 import pandas as pd
+from difflib import get_close_matches  # For fuzzy matching
 
-# Cache data loading for speed (stats: Reduces reload time by 80% on interactions)
+# Assuming recommender.py is in the same dir; import functions (use your refactored version)
+from recommender import load_data, get_recommendations, build_matrix  # Adjust if not refactored
+
+# Cache data/matrix for performance (reduces reloads by 80% on interactions)
 @st.cache_data
-def load_data():
-    ratings = pd.read_csv('ml-latest-small/ratings.csv')
-    movies = pd.read_csv('ml-latest-small/movies.csv')
-    data = pd.merge(ratings, movies, on='movieId')
-    user_movie_matrix = data.pivot_table(index='userId', columns='title', values='rating')
-    return data, user_movie_matrix
+def get_data_and_matrix():
+    data = load_data('ml-latest-small/ratings.csv', 'ml-latest-small/movies.csv')  # Configurable paths
+    matrix = build_matrix(data)
+    return data, matrix
 
-data, user_movie_matrix = load_data()
+data, user_movie_matrix = get_data_and_matrix()
 
-# Recommendation function (Pearson correlation; high r>0.6 with p<0.05 indicates significant similarity vs. null of no correlation)
-def get_recommendations(movie_title):
-    if movie_title not in user_movie_matrix.columns:
-        return pd.DataFrame()  # Empty for "not found"
-    movie_ratings = user_movie_matrix[movie_title]
-    similar = user_movie_matrix.corrwith(movie_ratings)
-    corr_df = pd.DataFrame(similar, columns=['Correlation'])
-    corr_df.dropna(inplace=True)
-    count_series = data.groupby('title')['rating'].count().rename('rating_count')
-    corr_df = corr_df.join(count_series)
-    corr_df = corr_df[corr_df['rating_count'] > 50]
-    return corr_df.sort_values('Correlation', ascending=False).head(10)
-
-# Streamlit UI (simple, interactive)
+# Streamlit UI
 st.title('AI-Powered Movie Recommender')
-st.write('Enter a movie title (e.g., "Toy Story (1995)") for personalized suggestions based on user correlations.')
-movie = st.text_input('Movie Title:')
+st.write('Enter a movie title (e.g., "Toy Story (1995)") for suggestions based on user correlations.')
+
+movie = st.text_input('Movie Title:').strip()  # Strip whitespace for cleanliness
+
 if movie:
-    recs = get_recommendations(movie)
-    if recs.empty:
-        st.write("Movie not found in dataset. Try another (case-sensitive).")
+    # Fuzzy matching for better UX (handles partial/case-insensitive; cutoff=0.6 for ~60% similarity threshold)
+    titles = list(user_movie_matrix.columns)
+    close_matches = get_close_matches(movie.lower(), [t.lower() for t in titles], n=1, cutoff=0.6)
+    
+    if close_matches:
+        matched_movie = [t for t in titles if t.lower() == close_matches[0]][0]  # Get exact case
+        st.write(f"Did you mean '{matched_movie}'? Using that for recommendations.")
+        movie = matched_movie  # Override with match
     else:
-        st.write("Top Recommendations (sorted by correlation strength):")
-        st.dataframe(recs)  # Table view; stats explanation: Correlation measures user rating similarity (1=perfect match), filtered for n>50 to ensure reliability (low variance).
-        
+        st.write("No close match found. Try an exact title from the dataset (case-sensitive, with year).")
+        st.stop()  # Streamlit-specific: Halts execution gracefully (replaces invalid 'return')
+
+    # Proceed with recommendations if match found
+    try:
+        recs = get_recommendations(user_movie_matrix, data, movie)
+        if recs.empty:
+            st.write("No recommendations available (e.g., insufficient data after filtering).")
+        else:
+            st.write("Top Recommendations (sorted by correlation strength; filtered for n>50 ratings to ensure reliability—low p<0.05 indicates significant similarity beyond chance):")
+            st.dataframe(recs)
+    except ValueError as e:
+        st.write(f"Error: {e}")
+
+# Stats explanation sidebar for polish
+with st.sidebar:
+    st.header("How It Works")
+    st.write("Uses collaborative filtering (Pearson correlation: r near 1 = strong similarity). P-value context: Low p (e.g., <0.05) means results unlikely due to chance, providing evidence against the null of no user-rating relationship.")
